@@ -1,0 +1,210 @@
+---
+description: Use uv for Python project, package and version management instead of pip, poetry, or pyenv. Enforces Python 3.13. Includes Docker guidelines and migration from pip/ poetry.
+alwaysApply: false
+---
+# Use uv for Python
+
+**Always use `uv`** instead of pip, poetry, pipenv, conda, or pyenv.
+
+## Required Python version: 3.13
+
+This project requires Python 3.13. If not installed:
+```bash
+uv python install 3.13
+uv python pin 3.13
+```
+
+## If uv is not installed
+
+```bash
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+## Command mappings
+
+| Instead of | Use |
+|------------|-----|
+| `pip install pkg` | `uv add pkg` |
+| `pip install -r requirements.txt` | `uv sync` |
+| `poetry add pkg` | `uv add pkg` |
+| `poetry install` | `uv sync` |
+| `python script.py` | `uv run python script.py` |
+| `pyenv install 3.13` | `uv python install 3.13` |
+| `pyenv local 3.13` | `uv python pin 3.13` |
+
+## Key commands
+
+```bash
+uv init                    # initialize project
+uv add pandas numpy        # add dependencies
+uv add --dev pytest        # add dev dependencies
+uv remove pkg              # remove dependency
+uv sync                    # install from lock file
+uv run python main.py      # run with project env
+uv python pin 3.13         # set Python version (use 3.13)
+```
+
+## Files to commit
+
+- `pyproject.toml` - dependencies
+- `uv.lock` - reproducible installs
+- `.python-version` - Python version
+
+## Migrate project from poetry to uv
+
+### Step 1: Generate uv.lock from existing pyproject.toml
+```bash
+uv lock
+```
+uv reads poetry dependencies from `pyproject.toml` automatically.
+
+### Step 2: Convert pyproject.toml sections
+
+```toml
+# ❌ REMOVE poetry-specific sections
+[tool.poetry]
+[tool.poetry.dependencies]
+[tool.poetry.group.dev.dependencies]
+
+# ✅ KEEP/ADD standard sections
+[project]
+name = "my-project"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.100.0",
+    "pandas>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+]
+
+# Optional: uv-specific settings
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+]
+```
+
+### Step 3: Sync and verify
+```bash
+uv sync              # install all dependencies
+uv run pytest        # verify tests work
+```
+
+### Step 4: Cleanup
+```bash
+rm poetry.lock       # remove old lock file
+rm -rf .venv         # optional: fresh venv
+uv sync              # recreate environment
+```
+
+### Step 5: Update CI/CD
+
+```yaml
+# ❌ OLD (poetry)
+- run: pip install poetry
+- run: poetry install
+- run: poetry run pytest
+
+# ✅ NEW (uv)
+- uses: astral-sh/setup-uv@v4
+- run: uv sync
+- run: uv run pytest
+```
+
+### Step 6: Update team docs
+- Replace `poetry install` with `uv sync`
+- Replace `poetry run` with `uv run`
+- Replace `poetry add` with `uv add`
+
+## Migrate project from pip/requirements.txt to uv
+
+### Step 1: Initialize uv project
+```bash
+uv init --no-readme
+```
+
+### Step 2: Add dependencies from requirements.txt
+```bash
+uv add $(cat requirements.txt | grep -v '^#' | tr '\n' ' ')
+```
+Or manually add key packages:
+```bash
+uv add fastapi pandas numpy
+```
+
+### Step 3: Cleanup
+```bash
+rm requirements.txt requirements-dev.txt  # remove old files
+uv sync                                    # verify everything works
+```
+
+## Docker: New Dockerfile
+
+```dockerfile
+FROM python:3.13-slim
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /app
+
+# Copy dependency files first (better caching)
+COPY pyproject.toml uv.lock ./
+
+# Install dependencies (no dev deps in production)
+RUN uv sync --frozen --no-dev
+
+# Copy application code
+COPY . .
+
+# Run with uv
+CMD ["uv", "run", "python", "main.py"]
+```
+
+## Docker: Migrate from pip
+
+```dockerfile
+# ❌ OLD (pip)
+FROM python:3.13-slim
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+# ✅ NEW (uv)
+FROM python:3.13-slim
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+```
+
+## Docker: Migrate from poetry
+
+```dockerfile
+# ❌ OLD (poetry)
+FROM python:3.13-slim
+RUN pip install poetry
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --no-dev
+
+# ✅ NEW (uv)
+FROM python:3.13-slim
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+```
+
+## Docker tips
+
+- Use `--frozen` to fail if lock file is outdated
+- Use `--no-dev` to exclude dev dependencies in production
+- Copy `pyproject.toml` and `uv.lock` before code for better layer caching
+- Use `uv run` as entrypoint to ensure correct environment
