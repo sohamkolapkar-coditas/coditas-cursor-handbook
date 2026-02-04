@@ -1,0 +1,1 @@
+Internal handbook for Coditas teams to standardize how we use Cursor across projects. Includes curated prompts, reusable skills, rules, guardrails, and workflows for day-to-day engineering.
