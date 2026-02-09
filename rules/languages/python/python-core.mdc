@@ -1,0 +1,172 @@
+---
+description: Core Python development standards and principles
+globs: **/*.py
+alwaysApply: false
+---
+
+# Python Core Standards
+
+## Code Style
+
+- Prefer functional programming over OOP
+- Use OOP classes only for connectors and interfaces to external systems
+- Write pure functions - only modify return values, never input parameters or global state
+- Follow DRY, KISS, and YAGNI principles
+- Use strict typing everywhere - function returns, variables, collections
+- Check if logic already exists before writing new code
+- Avoid untyped variables and generic types
+- Never use default parameter values - make all parameters explicit
+- Create proper type definitions for complex data structures
+- All imports at the top of the file
+- Write simple single-purpose functions — no multi-mode behavior, no flag parameters that switch logic
+
+```python
+# ❌ BAD - Modifies input, has default, uses flag
+def process_items(items: list, flag: bool = True) -> None:
+    if flag:
+        items.append("new")  # Modifies input!
+    else:
+        items.clear()
+
+# ✅ GOOD - Pure function, explicit parameters, single purpose
+def add_item_to_list(items: list[str], new_item: str) -> list[str]:
+    return [*items, new_item]
+
+def clear_list(items: list[str]) -> list[str]:
+    return []
+```
+
+## Error Handling
+
+- Always raise errors explicitly, never silently ignore them
+- Use specific error types that clearly indicate what went wrong
+- Avoid catch-all exception handlers that hide the root cause
+- Error messages should be clear and actionable
+- NO FALLBACKS: Code should either succeed or fail with a clear error
+- Transparent debugging: When something fails, show exactly what went wrong and why
+- Fix root causes, not symptoms - fallbacks hide real problems that need solving
+- External API/service calls: use retries with warnings, raise the last error if all attempts fail
+- Error messages must include enough context to debug (request params, response body, status codes)
+- Logging: no dynamic values interpolated into log message strings — pass them as structured data
+
+```python
+# ❌ BAD - Silent failure, generic exception, no context
+try:
+    response = api_call()
+except Exception:
+    return None  # Hides the problem!
+
+# ✅ GOOD - Explicit error, context included, no fallback
+def fetch_user_data(user_id: str) -> UserData:
+    try:
+        response = api_call(endpoint=f"/users/{user_id}")
+        response.raise_for_status()
+        return UserData(**response.json())
+    except requests.HTTPError as e:
+        raise UserFetchError(
+            f"Failed to fetch user {user_id}: {e.response.status_code}",
+            user_id=user_id,
+            response_body=e.response.text
+        ) from e
+```
+
+## Language Specifics
+
+- Prefer structured data models over loose dictionaries (Pydantic, TypedDict, dataclasses)
+- Avoid generic types like `Any`, `unknown`, or `list[dict[str, Any]]`
+- Use modern package management. Prefer uv over poetry. (pyproject.toml, package.json)
+- Leverage language-specific type features (discriminated unions, enums, Protocol)
+
+```python
+# ❌ BAD - Generic types, loose structure
+def process_data(data: dict[str, Any]) -> list[dict]:
+    return [{"result": item} for item in data.values()]
+
+# ✅ GOOD - Structured types, explicit models
+from typing import Protocol
+from pydantic import BaseModel
+
+class Processable(Protocol):
+    value: str
+    count: int
+
+class ProcessResult(BaseModel):
+    original_value: str
+    processed_count: int
+
+def process_data(items: list[Processable]) -> list[ProcessResult]:
+    return [
+        ProcessResult(
+            original_value=item.value,
+            processed_count=item.count * 2
+        )
+        for item in items
+    ]
+```
+
+## Libraries and Dependencies
+
+- Install in virtual environments, not globally
+- Add to project configs (pyproject.toml), not one-off installs
+- Update project configuration files when adding dependencies
+
+```toml
+# pyproject.toml
+[project]
+dependencies = [
+    "fastapi>=0.109.0",
+    "pydantic>=2.5.0",
+    "httpx>=0.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "ruff>=0.1.0",
+]
+```
+
+## Terminal Usage
+
+- Always use non-interactive git diff: `git --no-pager diff` or `git diff | cat`
+- Prefer non-interactive commands with flags over interactive ones
+
+## Code Changes
+
+- Matching the existing code style is more important than "correct" or "ideal" style
+- New code must look like it was written by the same author
+- Suggest only minimal changes related to current dialog
+- Change as few lines as possible while solving the problem
+- Focus only on what user is asking for - no extra improvements
+
+## Documentation
+
+- Code is the primary documentation — use clear naming, types, and docstrings
+- Keep documentation in docstrings of the functions/classes they describe, not in separate files
+- Separate docs files (in `docs/`) only when a concept cannot be expressed in code
+- Never duplicate documentation across files — reference other sources instead
+- Store knowledge as current state, not as a changelog of modifications
+
+```python
+def calculate_weighted_average(values: list[float], weights: list[float]) -> float:
+    """
+    Calculate weighted average of values.
+    
+    Args:
+        values: Numeric values to average
+        weights: Weight for each value (must sum to 1.0)
+        
+    Returns:
+        Weighted average of the values
+        
+    Raises:
+        ValueError: If lengths don't match or weights don't sum to 1.0
+    """
+    if len(values) != len(weights):
+        raise ValueError(f"Length mismatch: {len(values)} values, {len(weights)} weights")
+    
+    if not abs(sum(weights) - 1.0) < 1e-9:
+        raise ValueError(f"Weights must sum to 1.0, got {sum(weights)}")
+    
+    return sum(v * w for v, w in zip(values, weights))
+```
