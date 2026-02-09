@@ -1,0 +1,120 @@
+---
+description: This rule provides standard for usage of FastAPI framework.
+alwaysApply: false
+---
+
+
+## API Design & Versioning
+- All public APIs MUST be versioned from day one (/api/v1, /api/v2).
+- New breaking changes MUST result in a new API version.
+- Routes MUST NOT exist outside a versioned namespace.
+
+
+## Architecture & Layering
+- Code MUST follow a layered architecture.
+- Concerns MUST NEVER be mixed across layers.
+    ### Forbidden
+    - Routes importing ORM models
+    - Services returning ORM objects
+    - Repositories raising HTTP exceptions
+    - Business logic inside routes
+    - Database access outside repositories
+
+
+## Dependency Management
+- Shared logic MUST be implemented as dependencies.
+- Validation logic MUST NOT be duplicated across layers.
+- Related dependencies MUST be chained instead of redefined.
+- Dependencies MUST rely on FastAPI request-scope caching.
+
+
+## Data Models Separation
+- DTOs (Pydantic), Domain Models, and ORM Models MUST be separate.
+- A single class MUST NOT act as both DTO and ORM model.
+- ORM models MUST NEVER be exposed outside the repository layer.
+
+
+## Lifespan & Application State
+- Startup and shutdown logic MUST be implemented using lifespan events.
+- The following MUST NOT be initialized at import time:
+    - Database connections
+    - Cache clients
+    - External service clients
+- All resources MUST be cleaned up on shutdown.
+
+
+## Observability & Request Tracing
+- A request ID middleware MUST be implemented.
+- Every request MUST have a correlation ID.
+- The request ID MUST be:
+    - Injected into structured logs
+    - Attached to exception context
+    - Returned in response headers
+- Logging without request correlation MUST NOT be allowed.
+
+
+## Database Configuration
+- A static database URL MUST NOT be defined in environment variables.
+- Database configuration MUST use atomic environment variables:
+    - username
+    - password
+    - host
+    - port number
+    - database name
+    - dialect
+- The final database URL MUST be constructed at runtime in code.
+
+
+## Performance &  	 Enforcement
+- All I/O-bound operations MUST be asynchronous.
+- Blocking I/O MUST NOT be used in:
+    - Routes
+    - Dependencies
+    - Services
+- Database access MUST use async drivers.
+- External API calls MUST be async.
+- Lazy loading MUST be used for large datasets.
+- Large API responses MUST NOT be eagerly loaded.
+
+
+## RORO (Receive Object, Return Object)
+- Routes MUST accept input via Pydantic models only.
+- Routes MUST return Pydantic response models only.
+- SQLAlchemy / ORM models MUST NEVER be returned directly.
+
+
+    ### Naming Constraints
+    - Input DTOs MUST be named:
+        - `*Create`
+        - `*Update`
+        - `*Query`
+    - Output DTOs MUST be name:
+        - `*Response`
+
+
+## Error Handling
+- Unexpected errors MUST be handled by middleware.
+- Errors MUST be handled as early as possible using early returns.
+- Bare `except` clauses MUST NOT be used.
+- Exception messages MUST be informative and structured.
+
+
+## Validation Rules
+- Input validation MUST be done using Pydantic models.
+- Path and query parameters MUST use Pydantic models.
+- Validation logic MUST NOT be duplicated across layers.
+
+
+## Security
+- Configuration management MUST be done using environment variables and `pydantic-settings`
+- All the secrets MUST be included only in `.env` file
+- `bcrypt >= 5.0.0` MUST NOT be used.
+- Allowed password hashing options are ONLY:
+    - `bcrypt==4.3.0`
+    - `argon2-cffi`
+- Authentication code using unapproved hashing libraries MUST be rejected.
+
+
+## Readability & Maintainability
+- Routes and dependencies MUST be structured for readability.
+- Files MUST have a single clear responsibility.
