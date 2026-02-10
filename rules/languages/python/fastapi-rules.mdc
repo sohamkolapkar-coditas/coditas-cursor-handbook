@@ -405,32 +405,43 @@ async def get_user(query: UserQuery = Depends()):
     - `argon2-cffi`
 - Authentication code using unapproved hashing libraries MUST be rejected.
 
-### ❌ Bad (unapproved hashing)
+### ❌ Bad (using `os.getenv`)
 
 ```python
-from passlib.hash import bcrypt
-bcrypt.hash(password)
+import os
+
+API_KEY = os.getenv("PAYMENT_API_KEY")
+
+if not API_KEY:
+    raise RuntimeError("Missing API key")
+```
+### ✅ Good (using `pydantic-settings`)
+
+#### `.env`
+
+```env
+PAYMENT_API_KEY=sk_test_123456
 ```
 
-### ✅ Good (approved hashing only)
-
-**bcrypt 4.3.0**
+#### `settings.py`
 
 ```python
-from passlib.hash import bcrypt as bcrypt4
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
-bcrypt4.using(rounds=12).hash(password)
+
+class Settings(BaseSettings):
+    payment_api_key: str = Field(..., env="PAYMENT_API_KEY")
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
+
+
+settings = Settings()
 ```
 
-**argon2**
-
-```python
-from argon2 import PasswordHasher
-
-PasswordHasher().hash(password)
-```
-
----
 
 ## Readability & Maintainability
 - Routes and dependencies MUST be structured for readability.
