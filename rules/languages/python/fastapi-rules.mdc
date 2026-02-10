@@ -8,6 +8,25 @@ alwaysApply: false
 - All public APIs MUST be versioned from day one (/api/v1, /api/v2).
 - New breaking changes MUST result in a new API version.
 - Routes MUST NOT exist outside a versioned namespace.
+### ❌ Bad
+
+```python
+@app.get("/users")
+async def list_users():
+    ...
+```
+
+### ✅ Good
+
+```python
+router = APIRouter(prefix="/api/v1/users", tags=["users"])
+
+@router.get("")
+async def list_users():
+    ...
+```
+
+---
 
 
 ## Architecture & Layering
@@ -20,18 +39,114 @@ alwaysApply: false
     - Business logic inside routes
     - Database access outside repositories
 
+### ❌ Bad (mixed concerns)
+
+```python
+@router.get("/{user_id}")
+async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    return await db.get(UserORM, user_id)
+```
+
+### ✅ Good
+
+```python
+# routes.py
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: int,
+    service: UserService = Depends(get_user_service),
+):
+    return await service.get_user(user_id)
+```
+
+```python
+# service.py
+class UserService:
+    def __init__(self, repo: UserRepository):
+        self.repo = repo
+
+    async def get_user(self, user_id: int) -> User:
+        return await self.repo.get_by_id(user_id)
+```
+
+```python
+# repository.py
+class UserRepository:
+    async def get_by_id(self, user_id: int) -> User:
+        ...
+```
+
+---
+
 
 ## Dependency Management
 - Shared logic MUST be implemented as dependencies.
 - Validation logic MUST NOT be duplicated across layers.
 - Related dependencies MUST be chained instead of redefined.
 - Dependencies MUST rely on FastAPI request-scope caching.
+### ❌ Bad (duplicated logic)
+
+```python
+async def get_user_from_token(token: str = Depends(oauth2)):
+    ...
+
+async def get_user_from_header(x_user: str = Header(...)):
+    ...
+```
+
+### ✅ Good (chained dependencies + request-scope caching)
+
+```python
+async def get_token(...) -> str:
+    ...
+
+async def get_current_user(
+    token: str = Depends(get_token),
+) -> User:
+    ...
+```
+
+---
 
 
 ## Data Models Separation
 - DTOs (Pydantic), Domain Models, and ORM Models MUST be separate.
 - A single class MUST NOT act as both DTO and ORM model.
 - ORM models MUST NEVER be exposed outside the repository layer.
+
+### ❌ Bad (DTO = ORM)
+
+```python
+class User(Base, BaseModel):
+    __tablename__ = "users"
+    id: int
+```
+
+### ✅ Good
+
+```python
+# orm.py
+class UserORM(Base):
+    __tablename__ = "users"
+    id = mapped_column(Integer, primary_key=True)
+```
+
+```python
+# domain.py
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    id: int
+```
+
+```python
+# schemas.py
+class UserResponse(BaseModel):
+    id: int
+```
+
+---
 
 
 ## Lifespan & Application State
@@ -43,6 +158,28 @@ alwaysApply: false
 - All resources MUST be cleaned up on shutdown.
 
 
+### ❌ Bad (initialization at import time)
+
+```python
+engine = create_async_engine(DB_URL)
+```
+
+### ✅ Good (lifespan-managed resources)
+
+```python
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.engine = create_async_engine(build_db_url())
+    yield
+    await app.state.engine.dispose()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+---
+
 ## Observability & Request Tracing
 - A request ID middleware MUST be implemented.
 - Every request MUST have a correlation ID.
@@ -51,6 +188,34 @@ alwaysApply: false
     - Attached to exception context
     - Returned in response headers
 - Logging without request correlation MUST NOT be allowed.
+
+### ❌ Bad (no request correlation)
+
+```python
+logger.info("User created")
+```
+
+### ✅ Good (request ID everywhere)
+
+```python
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = str(uuid4())
+        request.state.request_id = request_id
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+```
+
+```python
+logger.info(
+    "User created",
+    extra={"request_id": request.state.request_id},
+)
+```
+
+---
 
 
 ## Database Configuration
@@ -64,6 +229,35 @@ alwaysApply: false
     - dialect
 - The final database URL MUST be constructed at runtime in code.
 
+### ❌ Bad
+
+```env
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost/db
+```
+
+### ✅ Good (atomic env vars)
+
+```env
+DB_USER=postgres
+DB_PASSWORD=secret
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=mydb
+DB_DIALECT=postgresql+asyncpg
+```
+
+```python
+def build_db_url() -> str:
+    return (
+        f"{settings.db_dialect}://"
+        f"{settings.db_user}:{settings.db_password}@"
+        f"{settings.db_host}:{settings.db_port}/"
+        f"{settings.db_name}"
+    )
+```
+
+---
+
 
 ## Performance &  	 Enforcement
 - All I/O-bound operations MUST be asynchronous.
@@ -75,6 +269,30 @@ alwaysApply: false
 - External API calls MUST be async.
 - Lazy loading MUST be used for large datasets.
 - Large API responses MUST NOT be eagerly loaded.
+
+### ❌ Bad (blocking I/O)
+
+```python
+import requests
+
+@app.get("/external")
+def call_external():
+    return requests.get("https://api.example.com").json()
+```
+
+### ✅ Good (fully async)
+
+```python
+import httpx
+
+@app.get("/external")
+async def call_external():
+    async with httpx.AsyncClient() as client:
+        response = await client.get("https://api.example.com")
+    return response.json()
+```
+
+---
 
 
 ## RORO (Receive Object, Return Object)
@@ -90,7 +308,34 @@ alwaysApply: false
         - `*Query`
     - Output DTOs MUST be name:
         - `*Response`
+### ❌ Bad
 
+```python
+@router.post("")
+async def create_user(payload: dict):
+    return UserORM(...)
+```
+
+### ✅ Good
+
+```python
+class UserCreate(BaseModel):
+    email: EmailStr
+```
+
+```python
+class UserResponse(BaseModel):
+    id: int
+    email: EmailStr
+```
+
+```python
+@router.post("", response_model=UserResponse)
+async def create_user(payload: UserCreate):
+    ...
+```
+
+---
 
 ## Error Handling
 - Unexpected errors MUST be handled by middleware.
@@ -98,12 +343,58 @@ alwaysApply: false
 - Bare `except` clauses MUST NOT be used.
 - Exception messages MUST be informative and structured.
 
+### ❌ Bad
+
+```python
+try:
+    ...
+except:
+    raise HTTPException(status_code=500, detail="Something went wrong")
+```
+
+### ✅ Good (structured + early handling)
+
+```python
+except IntegrityError as exc:
+    raise DomainError(
+        code="user_conflict",
+        message="User already exists",
+        context={"email": email},
+    ) from exc
+```
+
+Handled by **global exception middleware**.
+
+---
+
 
 ## Validation Rules
 - Input validation MUST be done using Pydantic models.
 - Path and query parameters MUST use Pydantic models.
 - Validation logic MUST NOT be duplicated across layers.
 
+### ❌ Bad (inline validation)
+
+```python
+@router.get("/{user_id}")
+async def get_user(user_id: int = Path(..., gt=0)):
+    ...
+```
+
+### ✅ Good (Pydantic everywhere)
+
+```python
+class UserQuery(BaseModel):
+    user_id: PositiveInt
+```
+
+```python
+@router.get("/{user_id}")
+async def get_user(query: UserQuery = Depends()):
+    ...
+```
+
+---
 
 ## Security
 - Configuration management MUST be done using environment variables and `pydantic-settings`
@@ -114,6 +405,32 @@ alwaysApply: false
     - `argon2-cffi`
 - Authentication code using unapproved hashing libraries MUST be rejected.
 
+### ❌ Bad (unapproved hashing)
+
+```python
+from passlib.hash import bcrypt
+bcrypt.hash(password)
+```
+
+### ✅ Good (approved hashing only)
+
+**bcrypt 4.3.0**
+
+```python
+from passlib.hash import bcrypt as bcrypt4
+
+bcrypt4.using(rounds=12).hash(password)
+```
+
+**argon2**
+
+```python
+from argon2 import PasswordHasher
+
+PasswordHasher().hash(password)
+```
+
+---
 
 ## Readability & Maintainability
 - Routes and dependencies MUST be structured for readability.
